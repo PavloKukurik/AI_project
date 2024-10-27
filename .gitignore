@@ -212,6 +212,7 @@ pyvenv.cfg
 pip-selfcheck.json
 
 ### VisualStudioCode ###
+.vscode
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
@@ -257,3 +258,6 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/linux,windows,visualstudiocode,python,jupyternotebooks,venv
+
+# Stuff
+test/
