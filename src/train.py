@@ -1,6 +1,7 @@
 import spacy
 from collections import defaultdict
 from datasets import load_dataset
+from datasets import Dataset as ds
 import torch
 from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
@@ -30,11 +31,10 @@ def tokenize_with_spacy(example):
     example["emoji_ids"] = [emoji_vocab[emoji] for emoji in emojis]
     return example
 
+dataset = load_dataset("KomeijiForce/Text2Emoji", split="all")  # Add `split="all"` or just load it without splits
 
-dataset = load_dataset("your_dataset_name", split="all")  # Add `split="all"` or just load it without splits
-
-train_subset = dataset[:8000] 
-valid_subset = dataset["test"][8000:10000]
+train_subset = ds.from_dict(dataset[:8000])
+valid_subset = ds.from_dict(dataset[8000:10000])
 
 subset_dataset = {"train": train_subset, "validation": valid_subset}
 
