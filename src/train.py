@@ -31,11 +31,10 @@ def tokenize_with_spacy(example):
     return example
 
 
-dataset = load_dataset("KomeijiForce/Text2Emoji", split="train")
-print(dataset)
+dataset = load_dataset("your_dataset_name", split="all")  # Add `split="all"` or just load it without splits
 
-train_subset = dataset["train"][:1000]
-valid_subset = dataset["test"][:1000]
+train_subset = dataset[:8000] 
+valid_subset = dataset["test"][8000:10000]
 
 subset_dataset = {"train": train_subset, "validation": valid_subset}
 
