@@ -90,10 +90,10 @@ class TransformerTranslator(nn.Module):
         self.encode_out = self.encoder(embedding)
         self.encoded = True
 
-    def forward(self, output_sequence):
-        if self.encoded is False:
-            print("ERROR::TransformerTranslator:: MUST ENCODE FIRST.")
-            return output_sequence
-        else:
-            embedding = self.output_embedding(output_sequence)
-            return self.decoder(self.encode_out, embedding)
+    def forward(self, src, tgt):
+        encoder_embedding = self.encoder_embedding(src).to(self.device)
+        encoder_out = self.encoder(encoder_embedding)
+
+        tgt_embedding = self.output_embedding(tgt).to(self.device)
+        return self.decoder(encoder_out, tgt_embedding)
+

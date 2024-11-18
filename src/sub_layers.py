@@ -4,12 +4,6 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import math
 
-"""
-Transformer Implementation By Chenrong Lu 2021
-Some Layers Refer to The Annotated Transformer (Harvard NLP)
-"""
-
-
 class SelfAttention(nn.Module):
     def __init__(self, embed_dim, d_k, d_v, mask=False):
         super(SelfAttention, self).__init__()
@@ -29,7 +23,6 @@ class SelfAttention(nn.Module):
         attention_weights = torch.matmul(query, key_transposed)  # (n_query,n_key)
         attention_weights = attention_weights / math.sqrt(self.d_k)
         if self.mask is True:
-            # REF : http://peterbloem.nl/blog/transformers
             indices = torch.triu_indices(
                 attention_weights.shape[1], attention_weights.shape[2], offset=1
             )
@@ -48,7 +41,6 @@ class SelfAttention(nn.Module):
 class MultiHeadAttention(nn.Module):
     def __init__(self, embed_dim, d_k, d_v, num_heads, mask=False, CUDA=False):
         super(MultiHeadAttention, self).__init__()
-        ### Credit: Issue From @shouldsee https://github.com/IpsumDominum/Pytorch-Simple-Transformer/issues/2
         self.attention_blocks = nn.ModuleList(
             [SelfAttention(embed_dim, d_k, d_v, mask) for _ in range(num_heads)]
         )
