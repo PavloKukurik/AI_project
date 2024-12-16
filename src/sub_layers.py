@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import math
 
+
 class SelfAttention(nn.Module):
     def __init__(self, embed_dim, d_k, d_v, mask=False):
         super(SelfAttention, self).__init__()
@@ -39,7 +40,7 @@ class SelfAttention(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, embed_dim, d_k, d_v, num_heads, mask=False, CUDA=False):
+    def __init__(self, embed_dim, d_k, d_v, num_heads, mask=False, CUDA=True):
         super(MultiHeadAttention, self).__init__()
         self.attention_blocks = nn.ModuleList(
             [SelfAttention(embed_dim, d_k, d_v, mask) for _ in range(num_heads)]
@@ -76,16 +77,19 @@ class LayerNorm(nn.Module):
 
 
 class PositionWiseFeedForward(nn.Module):
-    def __init__(self, embed_dim, output_dim):
+    def __init__(self, embed_dim, output_dim, CUDA=False):
         super(PositionWiseFeedForward, self).__init__()
         self.l1 = nn.Linear(embed_dim, output_dim)
         self.RELU = nn.ReLU()
         self.l2 = nn.Linear(output_dim, embed_dim)
         self.norm = LayerNorm(embed_dim)
         self.dropout = nn.Dropout(0.1)
+        self.device = torch.device("cuda:0" if CUDA else "cpu")
 
     def forward(self, x, residual_x):
-        x = torch.max(torch.zeros(x.shape), self.l1(x))
+        # Ensure x and zeros are on the same device
+        zeros = torch.zeros(x.shape, device=x.device)
+        x = torch.max(zeros, self.l1(x))
         x = self.RELU(x)
         x = self.l2(x)
         x = self.dropout(x)
@@ -104,7 +108,7 @@ class TransformerBlock(nn.Module):
             mask,
             CUDA=CUDA,
         )
-        self.feed_forward = PositionWiseFeedForward(embed_dim, embed_dim)
+        self.feed_forward = PositionWiseFeedForward(embed_dim, embed_dim, CUDA=CUDA)
 
     def forward(self, query, key, value, residual_x):
         attention_out = self.multi_head_attention(query, key, value, residual_x)
@@ -124,7 +128,7 @@ class VocabLogits(nn.Module):
 class Embeddings(nn.Module):
     "Taken from Annotated Transformer (HarvardNLP)"
 
-    def __init__(self, vocab_length, embed_dim, CUDA=False):
+    def __init__(self, vocab_length, embed_dim, CUDA=True):
         super(Embeddings, self).__init__()
         self.lut = nn.Embedding(vocab_length, embed_dim)
         self.pos_encode = PositionalEncoding(embed_dim, CUDA=CUDA)
@@ -138,7 +142,7 @@ class Embeddings(nn.Module):
 class PositionalEncoding(nn.Module):
     "Modified From Annotated Transformer (HarvardNLP)"
 
-    def __init__(self, embed_dim, max_len=5000, CUDA=False):
+    def __init__(self, embed_dim, max_len=5000, CUDA=True):
         super(PositionalEncoding, self).__init__()
         pe = torch.zeros(max_len, embed_dim)
         position = torch.arange(0, max_len).unsqueeze(1)
@@ -153,7 +157,7 @@ class PositionalEncoding(nn.Module):
         pe[:, 1::2] = torch.cos(position * div_term_odd)
         pe = pe.unsqueeze(0)
         if CUDA is True:
-            pe.type(torch.cuda.FloatTensor)
+            pe = pe.cuda()
         self.register_buffer("pe", pe)
 
     def forward(self, x):

@@ -1,161 +1,181 @@
-import spacy
-from collections import defaultdict
-from datasets import load_dataset
-from datasets import Dataset as ds
 import torch
-from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader, random_split
+from datasets import load_dataset
+from transformers import AutoTokenizer
+
+
 from simple_transformer import TransformerTranslator
+import warnings
+import tqdm
 
-# -----------------------------
-# Tokenizing and Dataset Prep
-# -----------------------------
+warnings.filterwarnings("ignore")
 
-nlp = spacy.load("en_core_web_sm")
-
-token_vocab = defaultdict(lambda: len(token_vocab))
-emoji_vocab = defaultdict(lambda: len(emoji_vocab))
-token_vocab["<pad>"]
-emoji_vocab["<pad>"]
-
-
-def tokenize_with_spacy(example):
-    """
-    Tokenize the text using spaCy and map tokens/emoji to their IDs.
-    """
-    tokens = [token.text for token in nlp(example["text"])]
-    example["input_ids"] = [token_vocab[token] for token in tokens]
-
-    emojis = example["emoji"]
-    example["emoji_ids"] = [emoji_vocab[emoji] for emoji in emojis]
-    return example
-
-dataset = load_dataset("KomeijiForce/Text2Emoji", split="all")  # Add `split="all"` or just load it without splits
-
-train_subset = ds.from_dict(dataset[:8000])
-valid_subset = ds.from_dict(dataset[8000:10000])
-
-subset_dataset = {"train": train_subset, "validation": valid_subset}
-
-train_tokenized = train_subset.map(tokenize_with_spacy, batched=False)
-valid_tokenized = valid_subset.map(tokenize_with_spacy, batched=False)
-
-tokenized_dataset = {
-    "train": train_tokenized,
-    "validation": valid_tokenized,
-}
-
-token_vocab = dict(token_vocab)
-emoji_vocab = dict(emoji_vocab)
-id_to_token = {v: k for k, v in token_vocab.items()}
-id_to_emoji = {v: k for k, v in emoji_vocab.items()}
+DEBUG = 0
 
 
 class Text2EmojiDataset(Dataset):
-    def __init__(self, dataset, max_seq_len):
-        self.dataset = dataset
-        self.max_seq_len = max_seq_len
+    def __init__(self, dataset, text_tokenizer, emoji_tokenizer, max_length=64):
+        self.texts = dataset["text"]
+        self.emojis = dataset["emoji"]
+        self.text_tokenizer = text_tokenizer
+        self.emoji_tokenizer = emoji_tokenizer
+        self.max_length = max_length
 
     def __len__(self):
-        return len(self.dataset)
+        return len(self.texts)
 
     def __getitem__(self, idx):
-        item = self.dataset[idx]
+        text_tokens = self.text_tokenizer(
+            self.texts[idx],
+            truncation=True,
+            max_length=self.max_length,
+            padding="max_length",
+            return_tensors="pt",
+        ).input_ids.squeeze()
 
-        input_ids = item["input_ids"] + [token_vocab["<pad>"]] * (
-            self.max_seq_len - len(item["input_ids"])
-        )
-        emoji_ids = item["emoji_ids"] + [emoji_vocab["<pad>"]] * (
-            self.max_seq_len - len(item["emoji_ids"])
-        )
+        # Tokenize emojis
 
-        return {
-            "input_ids": torch.tensor(input_ids, dtype=torch.long),
-            "labels": torch.tensor(emoji_ids, dtype=torch.long),
-        }
+        emoji_tokens = self.emoji_tokenizer(
+            self.emojis[idx],
+            truncation=True,
+            max_length=self.max_length,
+            padding="max_length",
+            return_tensors="pt",
+        ).input_ids.squeeze()
 
-
-# Hyperparameters
-MAX_SEQ_LEN = 50
-BATCH_SIZE = 32
-EMBED_DIM = 128
-NUM_BLOCKS = 4
-NUM_HEADS = 8
-EPOCHS = 10
-LR = 0.001
-
-train_dataset = Text2EmojiDataset(tokenized_dataset["train"], max_seq_len=MAX_SEQ_LEN)
-valid_dataset = Text2EmojiDataset(
-    tokenized_dataset["validation"], max_seq_len=MAX_SEQ_LEN
-)
-
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-valid_loader = DataLoader(valid_dataset, batch_size=BATCH_SIZE)
-
-# -----------------------------
-# Transformer Model
-# -----------------------------
-
-model = TransformerTranslator(
-    embed_dim=EMBED_DIM,
-    num_blocks=NUM_BLOCKS,
-    num_heads=NUM_HEADS,
-    encoder_vocab_size=len(token_vocab),
-    output_vocab_size=len(emoji_vocab),
-)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = model.to(device)
-
-# -----------------------------
-# Training Loop
-# -----------------------------
-
-optimizer = optim.Adam(model.parameters(), lr=LR)
-criterion = nn.CrossEntropyLoss(ignore_index=token_vocab["<pad>"])
+        return text_tokens, emoji_tokens
 
 
-def train_one_epoch(model, data_loader, optimizer, criterion, device):
-    model.train()
-    total_loss = 0
+def train_transformer(
+    model,
+    train_loader,
+    val_loader,
+    criterion,
+    optimizer,
+    epochs=50,
+    device="cuda" if torch.cuda.is_available() else "cpu",
+):
+    model.to(device)
+    best_val_loss = float("inf")
 
-    for batch in data_loader:
-        src = batch["input_ids"].to(device)
-        tgt = batch["labels"].to(device)
+    for epoch in range(epochs):
+        model.train()
+        train_loss = 0.0
 
-        optimizer.zero_grad()
-        output = model(src, tgt[:, :-1])
-        loss = criterion(output.reshape(-1, output.shape[-1]), tgt[:, 1:].reshape(-1))
-        loss.backward()
-        optimizer.step()
+        for src, tgt in tqdm.tqdm(train_loader, position=0, leave=True):
+            src = src.to(device)
+            tgt = tgt.to(device)
+            if DEBUG:
+                print("Passed data...")
+                print(src.shape, tgt.shape)
 
-        total_loss += loss.item()
+            optimizer.zero_grad()
+            output = model(src, tgt)
 
-    return total_loss / len(data_loader)
+            if DEBUG:
+                print(output.view(-1, output.shape[2]).shape)
+                print(tgt.view(-1).shape)
 
-
-def validate(model, data_loader, criterion, device):
-    model.eval()
-    total_loss = 0
-
-    with torch.no_grad():
-        for batch in data_loader:
-            src = batch["input_ids"].to(device)
-            tgt = batch["labels"].to(device)
-
-            output = model(src, tgt[:, :-1])
             loss = criterion(
-                output.reshape(-1, output.shape[-1]), tgt[:, 1:].reshape(-1)
+                output.view(
+                    -1,
+                    output.shape[2],  # (batch_size * seq_len, vocab_size)
+                ),
+                tgt.view(-1),  # (batch_size * seq_len)
             )
-            total_loss += loss.item()
 
-    return total_loss / len(data_loader)
+            # Backward pass and optimization
+            loss.backward()
+            optimizer.step()
+
+            train_loss += loss.item()
+
+        # Validation
+        model.eval()
+        val_loss = 0.0
+        with torch.no_grad():
+            for src, tgt in val_loader:
+                src = src.to(device)
+                tgt = tgt.to(device)
+
+                output = model(src, tgt)
+
+                loss = criterion(output.view(-1, output.size(-1)), tgt.view(-1))
+                val_loss += loss.item()
+
+        train_loss /= len(train_loader)
+        val_loss /= len(val_loader)
+
+        print(f"Epoch {epoch + 1}/{epochs}")
+        print(f"Train Loss: {train_loss:.4f}, Validation Loss: {val_loss:.4f}")
+
+        # Save best model
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(model.state_dict(), "best_transformer_model.pth")
 
 
-for epoch in range(EPOCHS):
-    train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
-    val_loss = validate(model, valid_loader, criterion, device)
+def main():
+    # Load dataset
+    print("Loading dataset...")
+    dataset = load_dataset("KomeijiForce/Text2Emoji")
 
-    print(
-        f"Epoch {epoch + 1}/{EPOCHS}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}"
+    # Tokenizers
+    print("Loading tokenizers...")
+    text_tokenizer = AutoTokenizer.from_pretrained("distilroberta-base")
+    emoji_tokenizer = AutoTokenizer.from_pretrained("distilroberta-base")
+
+    # Create dataset objects
+    train_size = int(0.8 * len(dataset))
+    val_size = len(dataset) - train_size
+    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+
+    print("Splitting dataset...")
+    train_dataset = Text2EmojiDataset(
+        train_dataset.dataset["train"], text_tokenizer, emoji_tokenizer
     )
+    val_dataset = Text2EmojiDataset(
+        val_dataset.dataset["train"], text_tokenizer, emoji_tokenizer
+    )
+
+    # DataLoaders
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=True)
+
+    # Hyperparameters
+    EMBED_DIM = 256
+    NUM_HEADS = 4
+    NUM_BLOCKS = 2
+    ENCODER_VOCAB_SIZE = text_tokenizer.vocab_size
+    OUTPUT_VOCAB_SIZE = emoji_tokenizer.vocab_size
+    CUDA = torch.cuda.is_available()
+
+    # Initialize model
+    model = TransformerTranslator(
+        embed_dim=EMBED_DIM,
+        num_blocks=NUM_BLOCKS,
+        num_heads=NUM_HEADS,
+        encoder_vocab_size=ENCODER_VOCAB_SIZE,
+        output_vocab_size=OUTPUT_VOCAB_SIZE,
+        CUDA=CUDA,
+    )
+
+    params_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print("Number of trainable parameters: ", params_num)
+
+    # Loss and Optimizer
+    criterion = nn.CrossEntropyLoss(ignore_index=text_tokenizer.pad_token_id)
+    optimizer = optim.Adam(model.parameters(), lr=0.0001)
+
+    # Train
+    try:
+        train_transformer(model, train_loader, val_loader, criterion, optimizer)
+    except Exception as e:
+        print(e)
+        exit(0)
+
+
+if __name__ == "__main__":
+    main()
