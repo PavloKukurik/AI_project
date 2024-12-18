@@ -17,7 +17,7 @@ num_blocks = 2
 num_heads = 2
 max_context_length = 64
 
-MODEL_CHECKPOINT_PATH = "transformer.5000.pth"
+MODEL_CHECKPOINT_PATH = "weigths/transformer.3.pth"
 TEXT_TOKENIZER_PATH = "distilroberta-base"
 
 
@@ -25,7 +25,7 @@ def load_model_and_tokenizers():
     # Load tokenizers
     text_tokenizer = AutoTokenizer.from_pretrained(TEXT_TOKENIZER_PATH)
     emoji_tokenizer = EmojiTokenizer(
-        load_dataset("KomeijiForce/Text2Emoji", split="train[:50%]")["emoji"]
+        load_dataset("KomeijiForce/Text2Emoji", split="train[:25%]")["emoji"]
     )
 
     # Initialize model

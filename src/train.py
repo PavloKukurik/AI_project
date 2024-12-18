@@ -26,9 +26,10 @@ num_heads = 2
 max_context_length = 64
 
 num_epochs = 10
-learning_rate = 1e-4
+learning_rate = 10e-4
 
 device = torch.device("cuda" if CUDA else "cpu")
+
 
 # Dataset build
 class Text2EmojiDataset(Dataset):
@@ -79,9 +80,22 @@ class Text2EmojiDataset(Dataset):
         return self.emoji_tokenizer.decode(tokens)
 
 
+def numel(m: torch.nn.Module, only_trainable: bool = False):
+    """
+    Returns the total number of parameters used by `m` (only counting
+    shared parameters once); if `only_trainable` is True, then only
+    includes parameters with `requires_grad = True`
+    """
+    parameters = list(m.parameters())
+    if only_trainable:
+        parameters = [p for p in parameters if p.requires_grad]
+    unique = {p.data_ptr(): p for p in parameters}.values()
+    return sum(p.numel() for p in unique)
+
+
 def main():
     # Load dataset
-    dataset = load_dataset("KomeijiForce/Text2Emoji", split="train[:50%]")
+    dataset = load_dataset("KomeijiForce/Text2Emoji", split="train[:25%]")
 
     # Load tokenizers
     text_tokenizer = AutoTokenizer.from_pretrained("distilroberta-base")
@@ -110,6 +124,9 @@ def main():
         output_vocab_size=output_vocab_size,
         CUDA=CUDA,
     ).to(device)
+
+    print("Number of parameters: ", numel(model))
+    print("Number of parameters (trainable): ", numel(model, only_trainable=True))
 
     # Loss Function + Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -148,8 +165,10 @@ def main():
             emoji_masked = emoji[:, 1:] * logit_mask[:, 1:]
 
             loss = criterion(
-                all_outs.view(-1, output_vocab_size),       # (batch_size * max_length, vocab_size)
-                emoji_masked.reshape(-1).type(torch.int64)  # (batch_size * max_length)
+                all_outs.view(
+                    -1, output_vocab_size
+                ),  # (batch_size * max_length, vocab_size)
+                emoji_masked.reshape(-1).type(torch.int64),  # (batch_size * max_length)
             )
 
             # Backpropagation
@@ -190,8 +209,10 @@ def main():
                 )
 
                 running_test_loss.append(loss.item())
-                print("Predicted emoji:    ", full_dataset.logit_to_sentence(all_outs[0]))
-                print("Ground truth Emoji: ", emoji_tokenizer.decode(emoji))
+                print(
+                    "Predicted emoji:    ", full_dataset.logit_to_sentence(all_outs[0])
+                )
+                print("Ground truth Emoji: ", emoji_tokenizer.decode(emoji.squeeze()))
 
                 if j == VALIDATE_AMOUNT:
                     break
@@ -204,7 +225,6 @@ def main():
         print(
             f"Epoch {epoch}/{num_epochs}; Train loss: {avg_loss}; Test loss: {avg_test_loss}"
         )
-        full_dataset.train()
 
         # Save checkpoint
         torch.save(
