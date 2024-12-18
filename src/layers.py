@@ -4,6 +4,11 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import math
 
+"""
+Transformer Implementation By Chenrong Lu 2021
+Some Layers Refer to The Annotated Transformer (Harvard NLP)
+"""
+
 
 class SelfAttention(nn.Module):
     def __init__(self, embed_dim, d_k, d_v, mask=False):
@@ -23,7 +28,8 @@ class SelfAttention(nn.Module):
         # Get attention weights
         attention_weights = torch.matmul(query, key_transposed)  # (n_query,n_key)
         attention_weights = attention_weights / math.sqrt(self.d_k)
-        if self.mask is True:
+        if self.mask == True:
+            # REF : http://peterbloem.nl/blog/transformers
             indices = torch.triu_indices(
                 attention_weights.shape[1], attention_weights.shape[2], offset=1
             )
@@ -40,8 +46,9 @@ class SelfAttention(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, embed_dim, d_k, d_v, num_heads, mask=False, CUDA=True):
+    def __init__(self, embed_dim, d_k, d_v, num_heads, mask=False, CUDA=False):
         super(MultiHeadAttention, self).__init__()
+        ### Credit: Issue From @shouldsee https://github.com/IpsumDominum/Pytorch-Simple-Transformer/issues/2
         self.attention_blocks = nn.ModuleList(
             [SelfAttention(embed_dim, d_k, d_v, mask) for _ in range(num_heads)]
         )
@@ -77,14 +84,13 @@ class LayerNorm(nn.Module):
 
 
 class PositionWiseFeedForward(nn.Module):
-    def __init__(self, embed_dim, output_dim, CUDA=False):
+    def __init__(self, embed_dim, output_dim):
         super(PositionWiseFeedForward, self).__init__()
         self.l1 = nn.Linear(embed_dim, output_dim)
         self.RELU = nn.ReLU()
         self.l2 = nn.Linear(output_dim, embed_dim)
         self.norm = LayerNorm(embed_dim)
         self.dropout = nn.Dropout(0.1)
-        self.device = torch.device("cuda:0" if CUDA else "cpu")
 
     def forward(self, x, residual_x):
         # Ensure x and zeros are on the same device
@@ -108,7 +114,7 @@ class TransformerBlock(nn.Module):
             mask,
             CUDA=CUDA,
         )
-        self.feed_forward = PositionWiseFeedForward(embed_dim, embed_dim, CUDA=CUDA)
+        self.feed_forward = PositionWiseFeedForward(embed_dim, embed_dim)
 
     def forward(self, query, key, value, residual_x):
         attention_out = self.multi_head_attention(query, key, value, residual_x)
@@ -128,7 +134,7 @@ class VocabLogits(nn.Module):
 class Embeddings(nn.Module):
     "Taken from Annotated Transformer (HarvardNLP)"
 
-    def __init__(self, vocab_length, embed_dim, CUDA=True):
+    def __init__(self, vocab_length, embed_dim, CUDA=False):
         super(Embeddings, self).__init__()
         self.lut = nn.Embedding(vocab_length, embed_dim)
         self.pos_encode = PositionalEncoding(embed_dim, CUDA=CUDA)
@@ -142,7 +148,7 @@ class Embeddings(nn.Module):
 class PositionalEncoding(nn.Module):
     "Modified From Annotated Transformer (HarvardNLP)"
 
-    def __init__(self, embed_dim, max_len=5000, CUDA=True):
+    def __init__(self, embed_dim, max_len=5000, CUDA=False):
         super(PositionalEncoding, self).__init__()
         pe = torch.zeros(max_len, embed_dim)
         position = torch.arange(0, max_len).unsqueeze(1)
@@ -156,8 +162,8 @@ class PositionalEncoding(nn.Module):
         pe[:, 0::2] = torch.sin(position * div_term_even)
         pe[:, 1::2] = torch.cos(position * div_term_odd)
         pe = pe.unsqueeze(0)
-        if CUDA is True:
-            pe = pe.cuda()
+        if CUDA == True:
+            pe.type(torch.cuda.FloatTensor)
         self.register_buffer("pe", pe)
 
     def forward(self, x):

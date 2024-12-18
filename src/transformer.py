@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from sub_layers import (
+
+from layers import (
     MultiHeadAttention,
     PositionalEncoding,
     TransformerBlock,
@@ -10,7 +11,7 @@ from sub_layers import (
 
 
 class Encoder(nn.Module):
-    def __init__(self, embed_dim, num_heads, num_blocks, CUDA=True):
+    def __init__(self, embed_dim, num_heads, num_blocks, CUDA=False):
         super(Encoder, self).__init__()
         self.transformer_blocks = nn.ModuleList(
             [
@@ -29,7 +30,7 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, embed_dim, num_heads, num_blocks, vocab_size, CUDA=True):
+    def __init__(self, embed_dim, num_heads, num_blocks, vocab_size, CUDA=False):
         super(Decoder, self).__init__()
         self.multi_head_attention = MultiHeadAttention(
             embed_dim,
@@ -49,11 +50,9 @@ class Decoder(nn.Module):
         self.vocab_logits = VocabLogits(embed_dim, vocab_size)
 
     def forward(self, encoder_outs, x):
-        # Process the entire input sequence
         for block in self.transformer_blocks:
-            # Apply self-attention to the entire sequence
             output_seq_attention_out = self.multi_head_attention(
-                query=x, key=x, value=x, residual_x=x
+                query=x[:, -1:, :], key=x, value=x, residual_x=x[:, -1:, :]
             )
             x = block(
                 query=output_seq_attention_out,
@@ -72,7 +71,7 @@ class TransformerTranslator(nn.Module):
         num_heads,
         encoder_vocab_size,
         output_vocab_size,
-        CUDA=True,
+        CUDA=False,
     ):
         super(TransformerTranslator, self).__init__()
 
@@ -85,16 +84,16 @@ class TransformerTranslator(nn.Module):
         )
 
         self.encoded = False
-        self.device = torch.device("cuda" if CUDA else "cpu")
+        self.device = torch.device("cuda:0" if CUDA else "cpu")
 
     def encode(self, input_sequence):
         embedding = self.encoder_embedding(input_sequence).to(self.device)
         self.encode_out = self.encoder(embedding)
         self.encoded = True
 
-    def forward(self, src, tgt):
-        encoder_embedding = self.encoder_embedding(src).to(self.device)
-        encoder_out = self.encoder(encoder_embedding)
-
-        tgt_embedding = self.output_embedding(tgt).to(self.device)
-        return self.decoder(encoder_out, tgt_embedding)
+    def forward(self, output_sequence):
+        if self.encoded is False:
+            return output_sequence
+        else:
+            embedding = self.output_embedding(output_sequence)
+            return self.decoder(self.encode_out, embedding)
